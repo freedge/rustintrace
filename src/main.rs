@@ -62,7 +62,9 @@ struct V4Key {
 struct Val {
     sequence_number: u32,
     acknowledgment_number:  u32,
-    count: u8
+    count: u8,
+    fin: bool,
+    rst: bool,
 }
 
 struct Block {
@@ -131,7 +133,7 @@ fn main() {
                                     destination_port: tcp_header.destination_port(),
                                 };
                                 let count = match packets.get_mut(&key) {
-                                    Some(v) if v.sequence_number == tcp_header.sequence_number() && v.acknowledgment_number == tcp_header.acknowledgment_number() => {
+                                    Some(v) if v.sequence_number == tcp_header.sequence_number() && v.acknowledgment_number == tcp_header.acknowledgment_number() && v.fin == tcp_header.fin() && v.rst == tcp_header.rst() => {
                                         v.count += 1;
                                         v.count
                                     }
@@ -139,10 +141,12 @@ fn main() {
                                         v.sequence_number = tcp_header.sequence_number();
                                         v.acknowledgment_number = tcp_header.acknowledgment_number();
                                         v.count = 1;
+                                        v.fin = tcp_header.fin();
+                                        v.rst = tcp_header.rst();
                                         1
                                     }
                                     None => {
-                                        packets.insert(key, Val{sequence_number: tcp_header.sequence_number(), acknowledgment_number: tcp_header.acknowledgment_number(), count: 1});
+                                        packets.insert(key, Val{sequence_number: tcp_header.sequence_number(), acknowledgment_number: tcp_header.acknowledgment_number(), count: 1, fin: tcp_header.fin(), rst: tcp_header.rst()});
                                         1
                                     }
                                 };
