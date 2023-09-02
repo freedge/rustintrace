@@ -156,7 +156,7 @@ fn main() {
 
                                     println!("[{total_captured}] {}:{}->{}:{} len={} seq={} ack={} ttl={} win={} [x{count}] {} {flags} ({})", ip_header.source_addr(), tcp_header.source_port(), ip_header.destination_addr(), tcp_header.destination_port(), ip_header.total_len(), tcp_header.sequence_number(), tcp_header.acknowledgment_number(), ip_header.ttl(), tcp_header.window_size(), df_string, Local::now());
                                 }
-                                if count == args.re && df && ip_header.ttl() > args.ttl && packet.header.caplen == packet.header.len {
+                                if count == args.re && df && ip_header.ttl() > args.ttl && packet.header.caplen == packet.header.len && !tcp_header.fin() && !tcp_header.syn() && !tcp_header.rst() {
                                     let header_size : usize = 4 * ip_header.ihl() as usize;
                                     tx.send(Block {packet: packet.to_vec(), header_size: header_size}).unwrap();
                                 }
