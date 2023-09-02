@@ -1,3 +1,6 @@
+[![Docker Repository on Quay](https://quay.io/repository/frigault/rustintrace/status "Docker Repository on Quay")](https://quay.io/repository/frigault/rustintrace)
+[![Rust](https://github.com/freedge/rustintrace/actions/workflows/rust.yml/badge.svg)](https://github.com/freedge/rustintrace/actions/workflows/rust.yml)
+
 An adhoc tool to investigate intermittent packet drop
 
 ```
