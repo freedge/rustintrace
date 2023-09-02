@@ -72,6 +72,9 @@ struct Block {
 
 fn main() {
     let args = Cli::parse();
+    assert!(args.againttl <= args.ttl);
+    assert!(args.snaplen >= 54);
+
     let mut total_captured = 0;
 
     let main_device = Device::from(&args.interface[..]);
@@ -144,7 +147,7 @@ fn main() {
                                     }
                                 };
                                 let df = ip_header.dont_fragment();
-                                if count == args.re || args.verbose {
+                                if (count >= args.re && ip_header.ttl() > args.ttl)|| args.verbose {
                                     let df_string = if df { "DF" } else { "" };
                                     let flags = format!("{}{}{}{}{}{}",
                                             if tcp_header.fin() { "F" } else {""},
