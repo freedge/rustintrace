@@ -35,6 +35,14 @@ struct Cli {
     #[arg(short, long, default_value_t = 1514)]
     snaplen: u16,
 
+    /// Send the same traceroute this many times
+    #[arg(short, long, default_value_t = 1)]
+    count: usize,
+
+    /// Use that ttl for newer traceroutes
+    #[arg(short, long, default_value_t = 2)]
+    againttl: u8,
+
     #[arg(short, long)]
     verbose: bool,
 
@@ -87,7 +95,7 @@ fn main() {
                     if let Ok(dur) = SystemTime::now().duration_since(last) {
                         if dur.as_millis() > args.quiescing {
                             println!("📣");
-                            traceroute::traceroute(receive.packet, args.ttl, &args.interface[..], receive.header_size);
+                            traceroute::traceroute(receive.packet, args.ttl, &args.interface[..], receive.header_size, args.count, args.againttl);
                             if args.verbose {
                                 println!("🙊");
                             }
@@ -109,8 +117,8 @@ fn main() {
                 if let Ok(value) = SlicedPacket::from_ethernet(&packet) {
                     if let Some(InternetSlice::Ipv4(ip_header, _)) = value.ip {
                         match value.transport {
-                            Some(TransportSlice::Icmpv4(_)) => {
-                                println!("[{total_captured}] ICMP from {} ({})", ip_header.source_addr(), Local::now());
+                            Some(TransportSlice::Icmpv4(icmp)) => {
+                                println!("[{total_captured}] ICMP from {} type={} code={} ({})", ip_header.source_addr(), icmp.type_u8(), icmp.code_u8(), Local::now());
                             }
                             Some(TransportSlice::Tcp(tcp_header)) =>  {
                                 let key = V4Key {
@@ -137,8 +145,16 @@ fn main() {
                                 };
                                 let df = ip_header.dont_fragment();
                                 if count == args.re || args.verbose {
-                                    let df_string = if df { "DF " } else { "" };
-                                    println!("[{total_captured}] {}:{}->{}:{} len={} seq={} ack={} ttl={} [x{count}] {} ({})", ip_header.source_addr(), tcp_header.source_port(), ip_header.destination_addr(), tcp_header.destination_port(), ip_header.total_len(), tcp_header.sequence_number(), tcp_header.acknowledgment_number(), ip_header.ttl(), df_string, Local::now());
+                                    let df_string = if df { "DF" } else { "" };
+                                    let flags = format!("{}{}{}{}{}{}",
+                                            if tcp_header.fin() { "F" } else {""},
+                                            if tcp_header.rst() { "R" } else {""},
+                                            if tcp_header.syn() { "S" } else {""},
+                                            if tcp_header.psh() { "P" } else {""},
+                                            if tcp_header.urg() { "!" } else {""},
+                                            if tcp_header.ack() { "." } else {""});
+
+                                    println!("[{total_captured}] {}:{}->{}:{} len={} seq={} ack={} ttl={} win={} [x{count}] {} {flags} ({})", ip_header.source_addr(), tcp_header.source_port(), ip_header.destination_addr(), tcp_header.destination_port(), ip_header.total_len(), tcp_header.sequence_number(), tcp_header.acknowledgment_number(), ip_header.ttl(), tcp_header.window_size(), df_string, Local::now());
                                 }
                                 if count == args.re && df && ip_header.ttl() > args.ttl && packet.header.caplen == packet.header.len {
                                     let header_size : usize = 4 * ip_header.ihl() as usize;
@@ -150,8 +166,11 @@ fn main() {
                     }
                 }
             }
+            Err(pcap::Error::TimeoutExpired) => {
+                println!("[{total_captured}] TimeoutExpired: Maybe try again (https://github.com/rust-pcap/pcap/issues/289)");
+            }
             Err(e) => {
-                println!("Exitting {:?}", e);
+                println!("[{total_captured}] Error: {:?}", e);
                 break;
             }
         }

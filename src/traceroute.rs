@@ -4,7 +4,7 @@ use std::{thread, time};
 
 
 // send the same packet with varying ttls
-pub fn traceroute(packet: Vec<u8>, ttl: u8, iface_name: &str, header_len: usize) {
+pub fn traceroute(packet: Vec<u8>, ttl: u8, iface_name: &str, header_len: usize, count: usize, againttl: u8) {
     let interfaces = pnet::datalink::interfaces();
     let interface = interfaces
         .into_iter()
@@ -16,18 +16,23 @@ pub fn traceroute(packet: Vec<u8>, ttl: u8, iface_name: &str, header_len: usize)
         Ok(_) => panic!("Unknown channel type"),
         Err(e) => panic!("Error happened {}", e),
     };
-    
-    for i in 1..=ttl {
-        let mut data = packet.clone();
-        data[22] = i;
-        let  c = checksum(&data[14..14+header_len], 5);
-        data[14 + 10 ] = ((c & 0xFF00) >> 8) as u8;
-        data[14 + 11 ] = (c & 0xFF) as u8;
+    for i in 0..count {
+        let usettl = if i == 0 { ttl } else { againttl };
+        if i > 0 {
+            thread::sleep(time::Duration::from_millis(1000));
+        }
+        for i in 1..=usettl {
+            let mut data = packet.clone();
+            data[22] = i;
+            let  c = checksum(&data[14..14+header_len], 5);
+            data[14 + 10 ] = ((c & 0xFF00) >> 8) as u8;
+            data[14 + 11 ] = (c & 0xFF) as u8;
 
-        sender
-            .send_to(&data, None)
-            .unwrap()
-            .unwrap();
-        thread::sleep(time::Duration::from_millis(40));
+            sender
+                .send_to(&data, None)
+                .unwrap()
+                .unwrap();
+            thread::sleep(time::Duration::from_millis(40));
+        }
     }
 }

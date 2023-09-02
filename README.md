@@ -16,7 +16,9 @@ Options:
   -r, --retransmit <RE>        We will only send after the packets has been seen this many times [default: 5]
   -m, --max <MAX>              Maximum number of packets we will capture [default: 100000]
   -q, --quiescing <QUIESCING>  Quiescing time: we will wait that many milli seconds before sending more [default: 2000]
-  -s, --snaplen <SNAPLEN>      Snaplen, we will only resend packets smaller than this size [default: 1500]
+  -s, --snaplen <SNAPLEN>      Snaplen, we will only resend packets smaller than this size [default: 1514]
+  -c, --count <COUNT>          Send the same traceroute this many times [default: 1]
+  -a, --againttl <AGAINTTL>    Use that ttl for newer traceroutes [default: 2]
   -v, --verbose
   -h, --help                   Print help
 ```
@@ -28,9 +30,15 @@ sudo podman run -ti --rm --network=host --name=rit --cap-add net_admin,net_raw q
 📣
 ```
 
-- detect packet retransmission
-- following the 5th transmission, resend the last packet with increasing ttl from 1 to 15
+- detect packet retransmission on INTERFACE, capture with tcpdump -s SNAPLEN FILTER, but quit after capturing MAX packets
+- following the REth transmission, resend the last packet with increasing ttl from 1 to TTL. Do that COUNT times with 1s between each, but send from 1 to AGAINTTL after the first try
+- ignore packets being retransmitted for QUIESCING milliseconds then
 
+
+equivalent more or less of the original intrace:
+```
+rustintrace -i eth0 "(host 10.224.123.3 and port 80) or icmp" -r 1 -t 12 -m 200 -q 1000  | grep ICMP
+```
 
 
 
