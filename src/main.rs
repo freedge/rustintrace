@@ -1,6 +1,6 @@
 use pcap::{Device, Capture};
 use clap::Parser;
-use etherparse::{SlicedPacket, TransportSlice, InternetSlice};
+use etherparse::{SlicedPacket, TransportSlice, InternetSlice, Icmpv4Type};
 use std::collections::HashMap;
 use chrono::Local;
 use std::thread;
@@ -12,23 +12,23 @@ mod traceroute;
 #[derive(Parser)]
 struct Cli {
     /// The interface to capture
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "eth0")]
     interface: String,
 
-    /// We will resend the packets using ttl ranging from 1 to this
-    #[arg(short, long = "maxttl", default_value_t = 15)]
+    /// We will resend the packets using ttl ranging from start to this
+    #[arg(short, long = "maxttl", default_value_t = 2)]
     ttl: u8,
 
     /// We will only send after the packets has been seen this many times
-    #[arg(short, long = "retransmit", default_value_t = 5)]
+    #[arg(short, long = "retransmit", default_value_t = 3)]
     re: u8,
 
     /// Maximum number of packets we will capture
-    #[arg(short, long, default_value_t = 100000)]
+    #[arg(short, long, default_value_t = 200000)]
     max: u32,
 
     /// Quiescing time: we will wait that many milli seconds before sending more
-    #[arg(short, long, default_value_t = 2000)]
+    #[arg(short, long, default_value_t = 1000)]
     quiescing: u128,
 
     /// Snaplen, we will only resend packets smaller than this size
@@ -43,10 +43,14 @@ struct Cli {
     #[arg(short, long, default_value_t = 2)]
     againttl: u8,
 
+    /// Start from this ttl
+    #[arg(short, long, default_value_t = 2)]
+    fromttl: u8,
+
     #[arg(short, long)]
     verbose: bool,
 
-    /// Filter (tcpdump format)
+    /// Filter (tcpdump format). For example (host 10.224.123.3 and port 80) or icmp
     filter: String,
 }
 
@@ -65,6 +69,8 @@ struct Val {
     count: u8,
     fin: bool,
     rst: bool,
+    ack: bool,
+    psh: bool,
 }
 
 struct Block {
@@ -100,7 +106,7 @@ fn main() {
                     if let Ok(dur) = SystemTime::now().duration_since(last) {
                         if dur.as_millis() > args.quiescing {
                             println!("📣");
-                            traceroute::traceroute(receive.packet, args.ttl, &args.interface[..], receive.header_size, args.count, args.againttl);
+                            traceroute::traceroute(receive.packet, args.ttl, &args.interface[..], receive.header_size, args.count, args.againttl, args.fromttl);
                             if args.verbose {
                                 println!("🙊");
                             }
@@ -123,7 +129,17 @@ fn main() {
                     if let Some(InternetSlice::Ipv4(ip_header, _)) = value.ip {
                         match value.transport {
                             Some(TransportSlice::Icmpv4(icmp)) => {
-                                println!("[{total_captured}] ICMP from {} type={} code={} ({})", ip_header.source_addr(), icmp.type_u8(), icmp.code_u8(), Local::now());
+                                let mut inner = format!("{}|{} ", icmp.type_u8(), icmp.code_u8());
+                                if let Icmpv4Type::TimeExceeded(_) = icmp.icmp_type() {
+                                    if let Ok(inner_packet) = SlicedPacket::from_ip(icmp.payload()) {
+                                        if let Some(InternetSlice::Ipv4(inner_ip, _)) = inner_packet.ip {
+                                            if let Some(TransportSlice::Tcp(inner_tcp)) = inner_packet.transport {
+                                                inner = format!("{}:{}->{}:{} len={} seq={} ack={} ", inner_ip.source_addr(), inner_tcp.source_port(), inner_ip.destination_addr(), inner_tcp.destination_port(), inner_ip.total_len(), inner_tcp.sequence_number(), inner_tcp.acknowledgment_number());
+                                            }
+                                        }
+                                    }
+                                }
+                                println!("[{total_captured}] ICMP {:<15}->{}={inner}({})", ip_header.source_addr(), ip_header.destination_addr(), Local::now());
                             }
                             Some(TransportSlice::Tcp(tcp_header)) =>  {
                                 let key = V4Key {
@@ -133,7 +149,7 @@ fn main() {
                                     destination_port: tcp_header.destination_port(),
                                 };
                                 let count = match packets.get_mut(&key) {
-                                    Some(v) if v.sequence_number == tcp_header.sequence_number() && v.acknowledgment_number == tcp_header.acknowledgment_number() && v.fin == tcp_header.fin() && v.rst == tcp_header.rst() => {
+                                    Some(v) if v.sequence_number == tcp_header.sequence_number() && v.acknowledgment_number == tcp_header.acknowledgment_number() && v.fin == tcp_header.fin() && v.rst == tcp_header.rst()  && v.ack == tcp_header.ack()  && v.psh == tcp_header.psh()=> {
                                         v.count += 1;
                                         v.count
                                     }
@@ -143,16 +159,18 @@ fn main() {
                                         v.count = 1;
                                         v.fin = tcp_header.fin();
                                         v.rst = tcp_header.rst();
+                                        v.ack = tcp_header.ack();
+                                        v.psh = tcp_header.psh();
                                         1
                                     }
                                     None => {
-                                        packets.insert(key, Val{sequence_number: tcp_header.sequence_number(), acknowledgment_number: tcp_header.acknowledgment_number(), count: 1, fin: tcp_header.fin(), rst: tcp_header.rst()});
+                                        packets.insert(key, Val{sequence_number: tcp_header.sequence_number(), acknowledgment_number: tcp_header.acknowledgment_number(), count: 1, fin: tcp_header.fin(), rst: tcp_header.rst(), ack: tcp_header.ack(), psh: tcp_header.psh()});
                                         1
                                     }
                                 };
                                 let df = ip_header.dont_fragment();
                                 if (count >= args.re && ip_header.ttl() > args.ttl)|| args.verbose {
-                                    let df_string = if df { "DF" } else { "" };
+                                    let df_string = if df { "df" } else { "" };
                                     let flags = format!("{}{}{}{}{}{}",
                                             if tcp_header.fin() { "F" } else {""},
                                             if tcp_header.rst() { "R" } else {""},
@@ -161,9 +179,9 @@ fn main() {
                                             if tcp_header.urg() { "!" } else {""},
                                             if tcp_header.ack() { "." } else {""});
 
-                                    println!("[{total_captured}] {}:{}->{}:{} len={} seq={} ack={} ttl={} win={} [x{count}] {} {flags} ({})", ip_header.source_addr(), tcp_header.source_port(), ip_header.destination_addr(), tcp_header.destination_port(), ip_header.total_len(), tcp_header.sequence_number(), tcp_header.acknowledgment_number(), ip_header.ttl(), tcp_header.window_size(), df_string, Local::now());
+                                    println!("[{total_captured}] {}:{}->{}:{} len={:<4} seq={:<10} ack={:<10} ttl={:<3} win={:<5} [x{count}] {} {flags} ({})", ip_header.source_addr(), tcp_header.source_port(), ip_header.destination_addr(), tcp_header.destination_port(), ip_header.total_len(), tcp_header.sequence_number(), tcp_header.acknowledgment_number(), ip_header.ttl(), tcp_header.window_size(), df_string, Local::now());
                                 }
-                                if count == args.re && df && ip_header.ttl() > args.ttl && packet.header.caplen == packet.header.len && !tcp_header.fin() && !tcp_header.syn() && !tcp_header.rst() {
+                                if count == args.re && df && ip_header.ttl() > args.ttl && packet.header.caplen == packet.header.len && !tcp_header.fin() && !tcp_header.rst()  && !tcp_header.syn() {
                                     let header_size : usize = 4 * ip_header.ihl() as usize;
                                     tx.send(Block {packet: packet.to_vec(), header_size: header_size}).unwrap();
                                 }

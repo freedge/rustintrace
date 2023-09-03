@@ -4,7 +4,7 @@ use std::{thread, time};
 
 
 // send the same packet with varying ttls
-pub fn traceroute(packet: Vec<u8>, ttl: u8, iface_name: &str, header_len: usize, count: usize, againttl: u8) {
+pub fn traceroute(packet: Vec<u8>, ttl: u8, iface_name: &str, header_len: usize, count: usize, againttl: u8, minttl: u8) {
     let interfaces = pnet::datalink::interfaces();
     let interface = interfaces
         .into_iter()
@@ -21,7 +21,7 @@ pub fn traceroute(packet: Vec<u8>, ttl: u8, iface_name: &str, header_len: usize,
         if i > 0 {
             thread::sleep(time::Duration::from_millis(1000));
         }
-        for i in 1..=usettl {
+        for i in minttl..=usettl {
             let mut data = packet.clone();
             data[22] = i;
             let  c = checksum(&data[14..14+header_len], 5);

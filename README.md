@@ -5,20 +5,21 @@ An adhoc tool to investigate intermittent packet drop
 
 ```
 $ sudo podman run -ti --rm --network=host --name=rit --cap-add net_admin,net_raw quay.io/frigault/rustintrace:latest --help
-Usage: rustintrace [OPTIONS] --interface <INTERFACE> <FILTER>
+Usage: rustintrace [OPTIONS] <FILTER>
 
 Arguments:
-  <FILTER>  Filter (tcpdump format)
+  <FILTER>  Filter (tcpdump format). For example (host 10.224.123.3 and port 80) or icmp
 
 Options:
-  -i, --interface <INTERFACE>  The interface to capture
-  -t, --maxttl <TTL>           We will resend the packets using ttl ranging from 1 to this [default: 15]
-  -r, --retransmit <RE>        We will only send after the packets has been seen this many times [default: 5]
-  -m, --max <MAX>              Maximum number of packets we will capture [default: 100000]
-  -q, --quiescing <QUIESCING>  Quiescing time: we will wait that many milli seconds before sending more [default: 2000]
+  -i, --interface <INTERFACE>  The interface to capture [default: eth0]
+  -t, --maxttl <TTL>           We will resend the packets using ttl ranging from start to this [default: 2]
+  -r, --retransmit <RE>        We will only send after the packets has been seen this many times [default: 3]
+  -m, --max <MAX>              Maximum number of packets we will capture [default: 200000]
+  -q, --quiescing <QUIESCING>  Quiescing time: we will wait that many milli seconds before sending more [default: 1000]
   -s, --snaplen <SNAPLEN>      Snaplen, we will only resend packets smaller than this size [default: 1514]
   -c, --count <COUNT>          Send the same traceroute this many times [default: 1]
   -a, --againttl <AGAINTTL>    Use that ttl for newer traceroutes [default: 2]
+  -f, --fromttl <FROMTTL>      Start from this ttl [default: 2]
   -v, --verbose
   -h, --help                   Print help
 ```
@@ -37,7 +38,7 @@ sudo podman run -ti --rm --network=host --name=rit --cap-add net_admin,net_raw q
 
 equivalent more or less of the original intrace:
 ```
-rustintrace -i eth0 "(host 10.224.123.3 and port 80) or icmp" -r 1 -t 12 -m 200 -q 1000  | grep ICMP
+rustintrace -i eth0 "(host 10.224.123.3 and port 80) or icmp" -r 1 -t 12 -m 200 -q 10000  | grep ICMP
 ```
 
 
