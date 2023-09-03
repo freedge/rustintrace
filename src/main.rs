@@ -1,6 +1,6 @@
 use pcap::{Device, Capture};
 use clap::Parser;
-use etherparse::{SlicedPacket, TransportSlice, InternetSlice, Icmpv4Type};
+use etherparse::{SlicedPacket, TransportSlice, InternetSlice, Icmpv4Type, Icmpv4Slice};
 use std::collections::HashMap;
 use chrono::Local;
 use std::thread;
@@ -78,6 +78,69 @@ struct Block {
     header_size: usize,
 }
 
+pub fn format_inner_packet(icmp : &Icmpv4Slice) -> String {
+    let mut inner = format!("{}|{} ", icmp.type_u8(), icmp.code_u8());
+    if let Icmpv4Type::TimeExceeded(_) = icmp.icmp_type() {
+        let mut payload = icmp.payload().to_vec();
+        let mut resized = false;
+        // apparently some devices are truncating the payload after the sequence number.
+        // If that's the case, we help etherparse by increasing the payload and putting 8 dword
+        // as header length
+        if payload.len() < 52 {
+           payload.resize(60, 0x80);
+           resized = true;
+        }
+        if let Ok(inner_packet) = SlicedPacket::from_ip(&payload[..]) {
+            if let Some(InternetSlice::Ipv4(inner_ip, _)) = inner_packet.ip {
+                if let Some(TransportSlice::Tcp(inner_tcp)) = inner_packet.transport {
+                    inner = format!("{}:{}->{}:{} len={} seq={} {}", inner_ip.source_addr(), inner_tcp.source_port(), inner_ip.destination_addr(), inner_tcp.destination_port(), inner_ip.total_len(), inner_tcp.sequence_number(), if resized { String::from("? ") } else { format!("ack={} ", inner_tcp.acknowledgment_number()) });
+                }
+            }
+        }
+    }
+    inner
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_hexstream(hexstream: &str) -> Vec<u8> {
+        let mut packet : Vec<u8> = vec![];
+        let mut it = hexstream.chars();
+        let mut n = it.next();
+        while let Some(high) = n {
+            let low = it.next().unwrap();
+            let s = String::new() + &high.to_string() + &low.to_string();
+            let c = i64::from_str_radix(&s, 16).unwrap() as u8;
+            packet.push(c);
+            n = it.next();
+        };
+        packet
+    }
+
+    #[test]
+    fn test_format_truncated_packet() {
+        let packet1 = "002248a10000000d3ab2e12d08004500003800000000fd01692c0a3900040a3c00000b00addb00000000450000baa52b4000010645700a3c0000ac1e9828c3be0029ff7e67bd";
+        let v = read_hexstream(packet1);
+        let Ok(eth) = SlicedPacket::from_ethernet(&v[..]) else { panic!("could not parse") };
+        let Some(TransportSlice::Icmpv4(icmp)) = eth.transport else { panic!("could not parse transport") };
+        let st = format_inner_packet(&icmp);
+        assert_eq!("10.60.0.0:50110->172.30.152.40:41 len=186 seq=4286474173 ? ", st);
+    }
+
+    #[test]
+    fn test_normal_packet() {
+        let packet1 = "002248a10000000d3ab2e847080045c000509c7600003e0121c5ac1cc7390a3c00000b0083c9000000004500003449f740000106a12a0a3c0000ac1e9828dd6e002985477c86afc9facf801010d0a2ac00000101080a23137e71862466f5";
+        let v = read_hexstream(packet1);
+        let Ok(eth) = SlicedPacket::from_ethernet(&v[..]) else { panic!("could not parse") };
+        let Some(TransportSlice::Icmpv4(icmp)) = eth.transport else { panic!("could not parse transport") };
+        let st = format_inner_packet(&icmp);
+        assert_eq!("10.60.0.0:56686->172.30.152.40:41 len=52 seq=2236054662 ack=2949249743 ", st);
+    }
+}
+
 fn main() {
     let args = Cli::parse();
     assert!(args.againttl <= args.ttl);
@@ -129,16 +192,7 @@ fn main() {
                     if let Some(InternetSlice::Ipv4(ip_header, _)) = value.ip {
                         match value.transport {
                             Some(TransportSlice::Icmpv4(icmp)) => {
-                                let mut inner = format!("{}|{} ", icmp.type_u8(), icmp.code_u8());
-                                if let Icmpv4Type::TimeExceeded(_) = icmp.icmp_type() {
-                                    if let Ok(inner_packet) = SlicedPacket::from_ip(icmp.payload()) {
-                                        if let Some(InternetSlice::Ipv4(inner_ip, _)) = inner_packet.ip {
-                                            if let Some(TransportSlice::Tcp(inner_tcp)) = inner_packet.transport {
-                                                inner = format!("{}:{}->{}:{} len={} seq={} ack={} ", inner_ip.source_addr(), inner_tcp.source_port(), inner_ip.destination_addr(), inner_tcp.destination_port(), inner_ip.total_len(), inner_tcp.sequence_number(), inner_tcp.acknowledgment_number());
-                                            }
-                                        }
-                                    }
-                                }
+                                let inner = format_inner_packet(&icmp);
                                 println!("[{total_captured}] ICMP {:<15}->{}={inner}({})", ip_header.source_addr(), ip_header.destination_addr(), Local::now());
                             }
                             Some(TransportSlice::Tcp(tcp_header)) =>  {
@@ -179,7 +233,7 @@ fn main() {
                                             if tcp_header.urg() { "!" } else {""},
                                             if tcp_header.ack() { "." } else {""});
 
-                                    println!("[{total_captured}] {}:{}->{}:{} len={:<4} seq={:<10} ack={:<10} ttl={:<3} win={:<5} [x{count}] {} {flags} ({})", ip_header.source_addr(), tcp_header.source_port(), ip_header.destination_addr(), tcp_header.destination_port(), ip_header.total_len(), tcp_header.sequence_number(), tcp_header.acknowledgment_number(), ip_header.ttl(), tcp_header.window_size(), df_string, Local::now());
+                                    println!("[{total_captured}] {}:{}->{}:{} len={:<4}{} seq={:<10} ack={:<10} ttl={:<3} win={:<5} [x{count}] {} {flags} ({})", ip_header.source_addr(), tcp_header.source_port(), ip_header.destination_addr(), tcp_header.destination_port(), ip_header.total_len(), if packet.header.caplen == packet.header.len { "" } else { "!" }, tcp_header.sequence_number(), tcp_header.acknowledgment_number(), ip_header.ttl(), tcp_header.window_size(), df_string, Local::now());
                                 }
                                 if count == args.re && df && ip_header.ttl() > args.ttl && packet.header.caplen == packet.header.len && !tcp_header.fin() && !tcp_header.rst()  && !tcp_header.syn() {
                                     let header_size : usize = 4 * ip_header.ihl() as usize;
