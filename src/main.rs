@@ -95,8 +95,14 @@ pub fn format_inner_packet(icmp : &Icmpv4Slice) -> String {
         }
         if let Ok(inner_packet) = SlicedPacket::from_ip(&payload[..]) {
             if let Some(InternetSlice::Ipv4(inner_ip, _)) = inner_packet.ip {
-                if let Some(TransportSlice::Tcp(inner_tcp)) = inner_packet.transport {
-                    inner = format!("{}:{}->{}:{} len={} seq={} {}", inner_ip.source_addr(), inner_tcp.source_port(), inner_ip.destination_addr(), inner_tcp.destination_port(), inner_ip.total_len(), inner_tcp.sequence_number(), if resized { String::from("? ") } else { format!("ack={} ", inner_tcp.acknowledgment_number()) });
+                match inner_packet.transport {
+                    Some(TransportSlice::Tcp(inner_tcp)) => {
+                        inner = format!("{}:{}->{}:{} len={} seq={} {}", inner_ip.source_addr(), inner_tcp.source_port(), inner_ip.destination_addr(), inner_tcp.destination_port(), inner_ip.total_len(), inner_tcp.sequence_number(), if resized { String::from("? ") } else { format!("ack={} ", inner_tcp.acknowledgment_number()) });
+                    }
+                    Some(TransportSlice::Icmpv4(inner_icmp)) => {
+                        inner = format!("{}|{} {}->{} len={} seq={} ", inner_icmp.type_u8(), inner_icmp.code_u8(), inner_ip.source_addr(), inner_ip.destination_addr(), inner_ip.total_len(), u16::from_be_bytes([inner_icmp.bytes5to8()[2], inner_icmp.bytes5to8()[3]]));
+                    }
+                    _ => {}
                 }
             }
         }
