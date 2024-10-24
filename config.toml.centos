@@ -1,4 +1,0 @@
-
-[patch.crates-io]
-serde = { path = "/usr/share/cargo/registry/serde-1.0.185/" }
-
